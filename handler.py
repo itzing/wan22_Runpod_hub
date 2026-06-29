@@ -20,6 +20,12 @@ logger = logging.getLogger(__name__)
 server_address = os.getenv('SERVER_ADDRESS', '127.0.0.1')
 client_id = str(uuid.uuid4())
 WRAPPED_KEY_PREFIX = 'v1:'
+UNSAFE_OPTIMIZATION_CLASSES = {
+    'EasyCache',
+    'PathchSageAttentionKJ',
+    'TorchCompileModel',
+    'TorchCompileModelWanVideoV2',
+}
 
 
 def decode_encryption_key():
@@ -327,6 +333,64 @@ def load_workflow(workflow_path):
         return json.load(file)
 
 
+def unsafe_optimizations_enabled():
+    return os.getenv('WAN22_ENABLE_UNSAFE_OPTIMIZATIONS') == '1'
+
+
+def replace_node_references(value, node_id, replacement):
+    if isinstance(value, list):
+        if len(value) == 2 and value[0] == node_id and isinstance(value[1], int):
+            return list(replacement)
+        return [replace_node_references(item, node_id, replacement) for item in value]
+
+    if isinstance(value, dict):
+        return {
+            key: replace_node_references(item, node_id, replacement)
+            for key, item in value.items()
+        }
+
+    return value
+
+
+def strip_unsafe_optimization_nodes(prompt):
+    removed = []
+    changed = True
+
+    while changed:
+        changed = False
+        for node_id, node in list(prompt.items()):
+            if node.get('class_type') not in UNSAFE_OPTIMIZATION_CLASSES:
+                continue
+
+            replacement = node.get('inputs', {}).get('model')
+            if not (
+                isinstance(replacement, list)
+                and len(replacement) == 2
+                and isinstance(replacement[0], str)
+                and isinstance(replacement[1], int)
+            ):
+                raise Exception(f'Unsafe optimization node {node_id} has no model input to bypass')
+
+            for target_id, target_node in prompt.items():
+                if target_id == node_id:
+                    continue
+                target_node['inputs'] = replace_node_references(
+                    target_node.get('inputs', {}),
+                    node_id,
+                    replacement,
+                )
+
+            removed.append(f"{node_id}:{node.get('class_type')}")
+            del prompt[node_id]
+            changed = True
+            break
+
+    if removed:
+        logger.info(f'Removed unsafe optimization nodes: {", ".join(removed)}')
+
+    return prompt
+
+
 def detect_video_mime(path_value):
     mime, _ = mimetypes.guess_type(path_value)
     return mime or 'video/mp4'
@@ -364,6 +428,9 @@ def handler(job):
             lora_count = min(lora_count, 3)
 
         prompt = load_workflow(workflow_file)
+        if not unsafe_optimizations_enabled():
+            prompt = strip_unsafe_optimization_nodes(prompt)
+
         prompt['260']['inputs']['image'] = image_path
         prompt['846']['inputs']['value'] = job_input.get('length', 81)
         prompt['246']['inputs']['value'] = job_input['prompt']

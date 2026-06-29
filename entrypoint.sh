@@ -5,7 +5,11 @@ set -e
 
 # Start ComfyUI in the background
 echo "Starting ComfyUI in the background..."
-python /ComfyUI/main.py --listen --use-sage-attention &
+comfy_args=(--listen)
+if [ "${WAN22_ENABLE_UNSAFE_OPTIMIZATIONS:-0}" = "1" ]; then
+    comfy_args+=(--use-sage-attention)
+fi
+python /ComfyUI/main.py "${comfy_args[@]}" &
 
 # Wait for ComfyUI to be ready
 echo "Waiting for ComfyUI to be ready..."
