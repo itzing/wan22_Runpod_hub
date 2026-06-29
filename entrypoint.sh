@@ -8,6 +8,8 @@ echo "Starting ComfyUI in the background..."
 comfy_args=(--listen)
 if [ "${WAN22_ENABLE_UNSAFE_OPTIMIZATIONS:-0}" = "1" ]; then
     comfy_args+=(--use-sage-attention)
+else
+    comfy_args+=(--disable-xformers --use-pytorch-cross-attention)
 fi
 python /ComfyUI/main.py "${comfy_args[@]}" &
 
