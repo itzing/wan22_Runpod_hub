@@ -14,10 +14,21 @@ The `dasiwa-i2v-lightspeed-v11` branch swaps the default WAN 2.2 I2V high/low di
 - `DasiwaWAN22I2V14BLightspeed_snatchkissHighV11.safetensors`
 - `DasiwaWAN22I2V14BLightspeed_snatchkissLowV11.safetensors`
 
-The original DaSiWa Hugging Face repository is gated, so this branch downloads the mirrored files from `itzing/mpm-test` with `wget` and does not require `HF_TOKEN` during image build:
+The original DaSiWa Hugging Face repository is gated. The DaSiWa files are mirrored in `itzing/mpm-test` and packaged once into the public Docker Hub model-provider image `itzing/wan22-dasiwa-models:v1`:
+
+- digest: `sha256:041d51e250480067d3ffec164f516b1f0bcf4facfdfeb2f79120f4f3df667e94`
+
+The endpoint Dockerfile copies the DaSiWa diffusion models from that provider image, so RunPod endpoint builds do not need `HF_TOKEN` and do not download the 29 GB checkpoint pair from Hugging Face during every deployment:
 
 ```bash
 docker build -t wan22-dasiwa .
+```
+
+To rebuild the model-provider image itself:
+
+```bash
+docker build -f dasiwa-model-provider.Dockerfile -t itzing/wan22-dasiwa-models:v1 .
+docker push itzing/wan22-dasiwa-models:v1
 ```
 
 This branch uses a single clean workflow and builds `lora_pairs` dynamically at runtime. Each input pair can provide a `high` LoRA, a `low` LoRA, or both; the handler creates separate high/low `LoraLoaderModelOnly` chains before queueing the prompt.

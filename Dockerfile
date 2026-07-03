@@ -1,10 +1,7 @@
 # Use specific version of nvidia cuda image
 FROM wlsdml1114/my-comfy-models:v1 AS model_provider
+FROM itzing/wan22-dasiwa-models:v1 AS dasiwa_model_provider
 FROM wlsdml1114/multitalk-base:1.4 as runtime
-
-RUN apt-get update && \
-    apt-get install --yes --no-install-recommends wget && \
-    rm -rf /var/lib/apt/lists/*
 
 RUN pip install runpod websocket-client
 
@@ -49,14 +46,7 @@ RUN cd /ComfyUI/custom_nodes && \
 
 COPY --from=model_provider /models/vae /ComfyUI/models/vae
 COPY --from=model_provider /models/text_encoders /ComfyUI/models/text_encoders
-
-RUN mkdir -p /ComfyUI/models/diffusion_models && \
-    wget --progress=dot:giga \
-      "https://huggingface.co/itzing/mpm-test/resolve/main/DasiwaWAN22I2V14BLightspeed_snatchkissHighV11.safetensors?download=true" \
-      -O /ComfyUI/models/diffusion_models/DasiwaWAN22I2V14BLightspeed_snatchkissHighV11.safetensors && \
-    wget --progress=dot:giga \
-      "https://huggingface.co/itzing/mpm-test/resolve/main/DasiwaWAN22I2V14BLightspeed_snatchkissLowV11.safetensors?download=true" \
-      -O /ComfyUI/models/diffusion_models/DasiwaWAN22I2V14BLightspeed_snatchkissLowV11.safetensors
+COPY --from=dasiwa_model_provider /models/diffusion_models /ComfyUI/models/diffusion_models
 
 COPY . .
 COPY extra_model_paths.yaml /ComfyUI/extra_model_paths.yaml
