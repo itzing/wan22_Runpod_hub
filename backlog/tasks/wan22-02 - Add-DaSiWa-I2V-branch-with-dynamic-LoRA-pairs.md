@@ -13,7 +13,7 @@ Create an isolated branch that swaps the WAN 2.2 I2V base high/low diffusion mod
 
 ## Acceptance Criteria
 
-- The branch downloads the DaSiWa FP8 v11 high/low checkpoint pair from Hugging Face during image build.
+- The branch downloads the DaSiWa v11 high/low checkpoint pair from the public `itzing/mpm-test` Hugging Face mirror during image build.
 - The workflow references the DaSiWa high/low filenames instead of the original `wan2.2_i2v_*_fp8_scaled.safetensors` files.
 - The handler builds dynamic `LoraLoaderModelOnly` chains for high and low model paths based on `lora_pairs`.
 - Static 1/2/3-LoRA node-id mappings are no longer used.
@@ -23,11 +23,11 @@ Create an isolated branch that swaps the WAN 2.2 I2V base high/low diffusion mod
 ## Notes
 
 - Do not launch live RunPod jobs without explicit approval.
-- The DaSiWa Hugging Face repository is gated; builds must provide an accepted `HF_TOKEN` or have another authenticated download path.
+- The original DaSiWa Hugging Face repository is gated; the branch uses the public `itzing/mpm-test` mirror so image builds do not need `HF_TOKEN`.
 
 ## Implementation Notes
 
-- `Dockerfile` now downloads the DaSiWa FP8 v11 high/low checkpoint pair from `darksidewalker/DaSiWa-WAN2.2-I2V`.
+- `Dockerfile` now downloads the DaSiWa v11 high/low checkpoint pair from public `itzing/mpm-test` files with `wget`.
 - Workflow JSONs were switched to DaSiWa model filenames and cleaned of baked speed-LoRA nodes.
 - `handler.py` now uses one clean workflow and creates dynamic high/low LoRA chains from `lora_pairs`.
 - Validation passed: Python compile, workflow JSON parsing, dynamic graph smoke test, and old placeholder/model string checks.

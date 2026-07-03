@@ -9,15 +9,15 @@ Wan22 is an advanced AI model that generates high-quality videos from images wit
 
 ## DaSiWa Branch Notes
 
-The `dasiwa-i2v-lightspeed-v11` branch swaps the default WAN 2.2 I2V high/low diffusion models for the DaSiWa distilled FP8 v11 pair:
+The `dasiwa-i2v-lightspeed-v11` branch swaps the default WAN 2.2 I2V high/low diffusion models for the DaSiWa distilled v11 pair mirrored in the public `itzing/mpm-test` Hugging Face repository:
 
-- `DasiwaWAN22I2V14BLightspeed_snatchkissHighV11-fp8-e4m3fn-mixed.safetensors`
-- `DasiwaWAN22I2V14BLightspeed_snatchkissLowV11-fp8-e4m3fn-mixed.safetensors`
+- `DasiwaWAN22I2V14BLightspeed_snatchkissHighV11.safetensors`
+- `DasiwaWAN22I2V14BLightspeed_snatchkissLowV11.safetensors`
 
-The DaSiWa Hugging Face repository is gated. Build with an accepted Hugging Face token, for example:
+The original DaSiWa Hugging Face repository is gated, so this branch downloads the mirrored files from `itzing/mpm-test` with `wget` and does not require `HF_TOKEN` during image build:
 
 ```bash
-docker build --build-arg HF_TOKEN="$HF_TOKEN" -t wan22-dasiwa .
+docker build -t wan22-dasiwa .
 ```
 
 This branch uses a single clean workflow and builds `lora_pairs` dynamically at runtime. Each input pair can provide a `high` LoRA, a `low` LoRA, or both; the handler creates separate high/low `LoraLoaderModelOnly` chains before queueing the prompt.
