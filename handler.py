@@ -26,6 +26,9 @@ UNSAFE_OPTIMIZATION_CLASSES = {
     'TorchCompileModel',
     'TorchCompileModelWanVideoV2',
 }
+MAX_LORA_PAIRS = int(os.getenv('WAN22_MAX_LORA_PAIRS', '4'))
+HIGH_MODEL_LOADER_NODE_ID = '230'
+LOW_MODEL_LOADER_NODE_ID = '235'
 
 
 def decode_encryption_key():
@@ -391,6 +394,123 @@ def strip_unsafe_optimization_nodes(prompt):
     return prompt
 
 
+def replace_node_references_in_nodes(prompt, node_ids, node_id, replacement):
+    for target_id in node_ids:
+        target_node = prompt.get(target_id)
+        if not target_node:
+            continue
+        target_node['inputs'] = replace_node_references(
+            target_node.get('inputs', {}),
+            node_id,
+            replacement,
+        )
+
+
+def normalize_lora_pairs(job_input):
+    raw_lora_pairs = job_input.get('lora_pairs', [])
+    if raw_lora_pairs is None:
+        return []
+    if not isinstance(raw_lora_pairs, list):
+        raise Exception('lora_pairs must be a list.')
+
+    if len(raw_lora_pairs) > MAX_LORA_PAIRS:
+        logger.warning(f'LoRA pair count {len(raw_lora_pairs)} exceeds max {MAX_LORA_PAIRS}. Truncating.')
+        raw_lora_pairs = raw_lora_pairs[:MAX_LORA_PAIRS]
+
+    normalized = []
+    for index, pair in enumerate(raw_lora_pairs):
+        if not isinstance(pair, dict):
+            raise Exception(f'LoRA pair {index + 1} must be an object.')
+
+        lora_high = str(pair.get('high') or '').strip()
+        lora_low = str(pair.get('low') or '').strip()
+        if not lora_high and not lora_low:
+            continue
+
+        try:
+            high_weight = float(pair.get('high_weight', 1.0))
+            low_weight = float(pair.get('low_weight', 1.0))
+        except (TypeError, ValueError):
+            raise Exception(f'LoRA pair {index + 1} weights must be numeric.')
+
+        normalized.append({
+            'high': lora_high or None,
+            'low': lora_low or None,
+            'high_weight': high_weight,
+            'low_weight': low_weight,
+        })
+
+    return normalized
+
+
+def apply_lora_chain_to_model_loader(prompt, lora_entries, model_loader_node_id, base_node_id, label):
+    if not lora_entries:
+        return prompt
+
+    if model_loader_node_id not in prompt:
+        raise Exception(f'Workflow is missing {label} model loader node {model_loader_node_id}.')
+
+    existing_node_ids = set(prompt.keys())
+    previous_model_binding = [model_loader_node_id, 0]
+
+    for index, (lora_name, strength) in enumerate(lora_entries):
+        node_id = str(base_node_id + index)
+        if node_id in prompt:
+            raise Exception(f'Dynamic LoRA node id collision: {node_id}')
+
+        prompt[node_id] = {
+            'inputs': {
+                'lora_name': lora_name,
+                'strength_model': strength,
+                'model': previous_model_binding,
+            },
+            'class_type': 'LoraLoaderModelOnly',
+            '_meta': {
+                'title': f'Dynamic {label} LoRA {index + 1}',
+            },
+        }
+        previous_model_binding = [node_id, 0]
+
+    replace_node_references_in_nodes(
+        prompt,
+        existing_node_ids,
+        model_loader_node_id,
+        previous_model_binding,
+    )
+    return prompt
+
+
+def apply_dynamic_lora_pairs_to_workflow(prompt, lora_pairs):
+    high_loras = [
+        (pair['high'], pair['high_weight'])
+        for pair in lora_pairs
+        if pair.get('high')
+    ]
+    low_loras = [
+        (pair['low'], pair['low_weight'])
+        for pair in lora_pairs
+        if pair.get('low')
+    ]
+
+    apply_lora_chain_to_model_loader(
+        prompt,
+        high_loras,
+        HIGH_MODEL_LOADER_NODE_ID,
+        3500,
+        'high',
+    )
+    apply_lora_chain_to_model_loader(
+        prompt,
+        low_loras,
+        LOW_MODEL_LOADER_NODE_ID,
+        3600,
+        'low',
+    )
+
+    logger.info(f'Dynamic LoRA pairs configured: high={len(high_loras)}, low={len(low_loras)}')
+    return prompt
+
+
 def detect_video_mime(path_value):
     mime, _ = mimetypes.guess_type(path_value)
     return mime or 'video/mp4'
@@ -412,20 +532,8 @@ def handler(job):
         image_path = os.path.abspath(os.path.join(task_id, f'input_image{input_ext}'))
         decrypt_media_input_to_file(secure_source_image, image_path)
 
-        lora_pairs = job_input.get('lora_pairs', [])
-        lora_count = len(lora_pairs)
-        if lora_count == 0:
-            workflow_file = '/wan22_nolora.json'
-        elif lora_count == 1:
-            workflow_file = '/wan22_1lora.json'
-        elif lora_count == 2:
-            workflow_file = '/wan22_2lora.json'
-        else:
-            if lora_count > 3:
-                logger.warning(f'LoRA pair count {lora_count} exceeds max 3. Truncating.')
-                lora_pairs = lora_pairs[:3]
-            workflow_file = '/wan22_3lora.json'
-            lora_count = min(lora_count, 3)
+        lora_pairs = normalize_lora_pairs(job_input)
+        workflow_file = '/wan22_nolora.json'
 
         prompt = load_workflow(workflow_file)
         if not unsafe_optimizations_enabled():
@@ -439,35 +547,17 @@ def handler(job):
         prompt['849']['inputs']['value'] = job_input['width']
         prompt['848']['inputs']['value'] = job_input['height']
 
-        steps = job_input.get('steps', 10)
+        steps = int(job_input.get('steps', 4))
         if '834' in prompt:
             prompt['834']['inputs']['steps'] = steps
             logger.info(f'Steps set to: {steps}')
+        if '829' in prompt:
+            split_step = max(1, min(steps - 1, round(steps * 0.6))) if steps > 1 else 1
+            prompt['829']['inputs']['step'] = split_step
+            logger.info(f'Sigma split step set to: {split_step}')
 
-        if lora_count > 0:
-            lora_node_mapping = {
-                1: {'high': ['282'], 'low': ['286']},
-                2: {'high': ['282', '339'], 'low': ['286', '337']},
-                3: {'high': ['282', '339', '340'], 'low': ['286', '337', '338']},
-            }
-            current_mapping = lora_node_mapping[lora_count]
-            for index, lora_pair in enumerate(lora_pairs):
-                lora_high = lora_pair.get('high')
-                lora_low = lora_pair.get('low')
-                lora_high_weight = lora_pair.get('high_weight', 1.0)
-                lora_low_weight = lora_pair.get('low_weight', 1.0)
-
-                if index < len(current_mapping['high']):
-                    high_node_id = current_mapping['high'][index]
-                    if high_node_id in prompt and lora_high:
-                        prompt[high_node_id]['inputs']['lora_name'] = lora_high
-                        prompt[high_node_id]['inputs']['strength_model'] = lora_high_weight
-
-                if index < len(current_mapping['low']):
-                    low_node_id = current_mapping['low'][index]
-                    if low_node_id in prompt and lora_low:
-                        prompt[low_node_id]['inputs']['lora_name'] = lora_low
-                        prompt[low_node_id]['inputs']['strength_model'] = lora_low_weight
+        if lora_pairs:
+            prompt = apply_dynamic_lora_pairs_to_workflow(prompt, lora_pairs)
 
         ws_url = f'ws://{server_address}:8188/ws?clientId={client_id}'
         http_url = f'http://{server_address}:8188/'

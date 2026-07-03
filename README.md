@@ -7,6 +7,23 @@ This project is a template designed to easily deploy and use [Wan22](https://git
 
 Wan22 is an advanced AI model that generates high-quality videos from images with natural motion and realistic animations.
 
+## DaSiWa Branch Notes
+
+The `dasiwa-i2v-lightspeed-v11` branch swaps the default WAN 2.2 I2V high/low diffusion models for the DaSiWa distilled FP8 v11 pair:
+
+- `DasiwaWAN22I2V14BLightspeed_snatchkissHighV11-fp8-e4m3fn-mixed.safetensors`
+- `DasiwaWAN22I2V14BLightspeed_snatchkissLowV11-fp8-e4m3fn-mixed.safetensors`
+
+The DaSiWa Hugging Face repository is gated. Build with an accepted Hugging Face token, for example:
+
+```bash
+docker build --build-arg HF_TOKEN="$HF_TOKEN" -t wan22-dasiwa .
+```
+
+This branch uses a single clean workflow and builds `lora_pairs` dynamically at runtime. Each input pair can provide a `high` LoRA, a `low` LoRA, or both; the handler creates separate high/low `LoraLoaderModelOnly` chains before queueing the prompt.
+
+Recommended DaSiWa starting point: `steps=4`, `cfg=1`, no LightX2V/CausVid speed LoRA stacked on top.
+
 ## ✨ Key Features
 
 *   **Image-to-Video Generation**: Converts static images into dynamic videos with natural motion.

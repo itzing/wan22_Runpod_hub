@@ -5,6 +5,9 @@ FROM wlsdml1114/multitalk-base:1.4 as runtime
 RUN pip install -U "huggingface_hub[hf_transfer]"
 RUN pip install runpod websocket-client
 
+ARG HF_TOKEN
+ENV HF_HUB_ENABLE_HF_TRANSFER=1
+
 WORKDIR /
 
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git && \
@@ -46,8 +49,15 @@ RUN cd /ComfyUI/custom_nodes && \
 
 COPY --from=model_provider /models/vae /ComfyUI/models/vae
 COPY --from=model_provider /models/text_encoders /ComfyUI/models/text_encoders
-COPY --from=model_provider /models/diffusion_models /ComfyUI/models/diffusion_models
-COPY --from=model_provider /models/loras /ComfyUI/models/loras
+
+RUN mkdir -p /ComfyUI/models/diffusion_models /tmp/dasiwa && \
+    hf download darksidewalker/DaSiWa-WAN2.2-I2V \
+      Distilled/FP8/v11/DasiwaWAN22I2V14BLightspeed_snatchkissHighV11-fp8-e4m3fn-mixed.safetensors \
+      Distilled/FP8/v11/DasiwaWAN22I2V14BLightspeed_snatchkissLowV11-fp8-e4m3fn-mixed.safetensors \
+      --local-dir /tmp/dasiwa \
+      --token "$HF_TOKEN" && \
+    cp /tmp/dasiwa/Distilled/FP8/v11/*.safetensors /ComfyUI/models/diffusion_models/ && \
+    rm -rf /tmp/dasiwa
 
 COPY . .
 COPY extra_model_paths.yaml /ComfyUI/extra_model_paths.yaml
