@@ -31,6 +31,7 @@ MAX_LORA_PAIRS = int(os.getenv('WAN22_MAX_LORA_PAIRS', '4'))
 HIGH_MODEL_LOADER_NODE_ID = '230'
 LOW_MODEL_LOADER_NODE_ID = '235'
 HTTP_ERROR_BODY_LIMIT = int(os.getenv('WAN22_HTTP_ERROR_BODY_LIMIT', '4000'))
+COMFYUI_INPUT_DIR = os.getenv('COMFYUI_INPUT_DIR', '/ComfyUI/input')
 
 
 def decode_encryption_key():
@@ -282,6 +283,12 @@ def decrypt_media_input_to_file(descriptor, output_file_path):
         output_file.write(plaintext)
 
     return output_file_path
+
+
+def get_comfy_input_image_target(task_id, input_ext):
+    image_file_name = f'{task_id}_input_image{input_ext}'
+    image_path = os.path.join(COMFYUI_INPUT_DIR, image_file_name)
+    return image_path, image_file_name
 
 
 def get_secure_media_input(job_input, roles):
@@ -543,7 +550,7 @@ def handler(job):
 
         task_id = f'task_{uuid.uuid4()}'
         input_ext = mimetypes.guess_extension(secure_source_image.get('mime') or 'image/png') or '.png'
-        image_path = os.path.abspath(os.path.join(task_id, f'input_image{input_ext}'))
+        image_path, image_file_name = get_comfy_input_image_target(task_id, input_ext)
         decrypt_media_input_to_file(secure_source_image, image_path)
 
         lora_pairs = normalize_lora_pairs(job_input)
@@ -553,7 +560,7 @@ def handler(job):
         if not unsafe_optimizations_enabled():
             prompt = strip_unsafe_optimization_nodes(prompt)
 
-        prompt['260']['inputs']['image'] = image_path
+        prompt['260']['inputs']['image'] = image_file_name
         prompt['846']['inputs']['value'] = job_input.get('length', 81)
         prompt['246']['inputs']['value'] = job_input['prompt']
         prompt['835']['inputs']['noise_seed'] = job_input['seed']
