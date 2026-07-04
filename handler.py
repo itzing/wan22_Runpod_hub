@@ -38,6 +38,7 @@ COMFYUI_RUNTIME_DIRS = [
     '/ComfyUI/output',
     '/ComfyUI/temp',
 ]
+T2V_MODE_VALUES = {'t2v', 'text_to_video', 'wan22-t2v'}
 
 
 def decode_encryption_key():
@@ -543,6 +544,44 @@ def detect_video_mime(path_value):
     return mime or 'video/mp4'
 
 
+def is_t2v_request(job_input):
+    mode = str(job_input.get('mode') or job_input.get('task') or '').strip().lower()
+    return mode in T2V_MODE_VALUES
+
+
+def get_negative_prompt(job_input):
+    return (
+        job_input.get('negativePrompt')
+        or job_input.get('negative_prompt')
+        or ''
+    )
+
+
+def configure_t2v_workflow(prompt, job_input):
+    steps = max(2, int(job_input.get('steps', 4)))
+    split_step = max(1, min(steps - 1, round(steps * 0.5)))
+    cfg = float(job_input.get('cfg', 1.0))
+    seed = int(job_input['seed'])
+
+    prompt['6']['inputs']['text'] = job_input['prompt']
+    prompt['7']['inputs']['text'] = get_negative_prompt(job_input)
+    prompt['57']['inputs']['noise_seed'] = seed
+    prompt['57']['inputs']['steps'] = steps
+    prompt['57']['inputs']['cfg'] = cfg
+    prompt['57']['inputs']['end_at_step'] = split_step
+    prompt['58']['inputs']['noise_seed'] = seed
+    prompt['58']['inputs']['steps'] = steps
+    prompt['58']['inputs']['cfg'] = cfg
+    prompt['58']['inputs']['start_at_step'] = split_step
+    prompt['58']['inputs']['end_at_step'] = steps
+    prompt['59']['inputs']['width'] = int(job_input['width'])
+    prompt['59']['inputs']['height'] = int(job_input['height'])
+    prompt['59']['inputs']['length'] = int(job_input.get('length', 81))
+
+    logger.info(f'T2V workflow configured: steps={steps}, split={split_step}, cfg={cfg}')
+    return prompt
+
+
 def cleanup_directory_contents(directory_path):
     if not directory_path:
         return
@@ -591,40 +630,46 @@ def handler(job):
     try:
         job_input = decrypt_secure_input(job_input)
         transport_request = get_transport_request(job_input)
-        secure_source_image = get_secure_media_input(job_input, ['source_image'])
-        if not secure_source_image:
-            raise Exception('WAN22 secure contract requires media_inputs with role source_image')
+        secure_source_image = None
 
-        input_ext = mimetypes.guess_extension(secure_source_image.get('mime') or 'image/png') or '.png'
-        image_path, image_file_name = get_comfy_input_image_target(task_id, input_ext)
-        decrypt_media_input_to_file(secure_source_image, image_path)
+        if is_t2v_request(job_input):
+            prompt = load_workflow('/wan22_t2v.json')
+            prompt = configure_t2v_workflow(prompt, job_input)
+        else:
+            secure_source_image = get_secure_media_input(job_input, ['source_image'])
+            if not secure_source_image:
+                raise Exception('WAN22 secure contract requires media_inputs with role source_image')
 
-        lora_pairs = normalize_lora_pairs(job_input)
-        workflow_file = '/wan22_nolora.json'
+            input_ext = mimetypes.guess_extension(secure_source_image.get('mime') or 'image/png') or '.png'
+            image_path, image_file_name = get_comfy_input_image_target(task_id, input_ext)
+            decrypt_media_input_to_file(secure_source_image, image_path)
 
-        prompt = load_workflow(workflow_file)
-        if not unsafe_optimizations_enabled():
-            prompt = strip_unsafe_optimization_nodes(prompt)
+            lora_pairs = normalize_lora_pairs(job_input)
+            workflow_file = '/wan22_nolora.json'
 
-        prompt['260']['inputs']['image'] = image_file_name
-        prompt['846']['inputs']['value'] = job_input.get('length', 81)
-        prompt['246']['inputs']['value'] = job_input['prompt']
-        prompt['835']['inputs']['noise_seed'] = job_input['seed']
-        prompt['830']['inputs']['cfg'] = job_input['cfg']
-        prompt['849']['inputs']['value'] = job_input['width']
-        prompt['848']['inputs']['value'] = job_input['height']
+            prompt = load_workflow(workflow_file)
+            if not unsafe_optimizations_enabled():
+                prompt = strip_unsafe_optimization_nodes(prompt)
 
-        steps = int(job_input.get('steps', 4))
-        if '834' in prompt:
-            prompt['834']['inputs']['steps'] = steps
-            logger.info(f'Steps set to: {steps}')
-        if '829' in prompt:
-            split_step = max(1, min(steps - 1, round(steps * 0.6))) if steps > 1 else 1
-            prompt['829']['inputs']['step'] = split_step
-            logger.info(f'Sigma split step set to: {split_step}')
+            prompt['260']['inputs']['image'] = image_file_name
+            prompt['846']['inputs']['value'] = job_input.get('length', 81)
+            prompt['246']['inputs']['value'] = job_input['prompt']
+            prompt['835']['inputs']['noise_seed'] = job_input['seed']
+            prompt['830']['inputs']['cfg'] = job_input['cfg']
+            prompt['849']['inputs']['value'] = job_input['width']
+            prompt['848']['inputs']['value'] = job_input['height']
 
-        if lora_pairs:
-            prompt = apply_dynamic_lora_pairs_to_workflow(prompt, lora_pairs)
+            steps = int(job_input.get('steps', 4))
+            if '834' in prompt:
+                prompt['834']['inputs']['steps'] = steps
+                logger.info(f'Steps set to: {steps}')
+            if '829' in prompt:
+                split_step = max(1, min(steps - 1, round(steps * 0.6))) if steps > 1 else 1
+                prompt['829']['inputs']['step'] = split_step
+                logger.info(f'Sigma split step set to: {split_step}')
+
+            if lora_pairs:
+                prompt = apply_dynamic_lora_pairs_to_workflow(prompt, lora_pairs)
 
         ws_url = f'ws://{server_address}:8188/ws?clientId={client_id}'
         http_url = f'http://{server_address}:8188/'
