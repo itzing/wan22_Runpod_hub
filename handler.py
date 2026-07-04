@@ -4,6 +4,7 @@ import logging
 import mimetypes
 import os
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
@@ -29,6 +30,7 @@ UNSAFE_OPTIMIZATION_CLASSES = {
 MAX_LORA_PAIRS = int(os.getenv('WAN22_MAX_LORA_PAIRS', '4'))
 HIGH_MODEL_LOADER_NODE_ID = '230'
 LOW_MODEL_LOADER_NODE_ID = '235'
+HTTP_ERROR_BODY_LIMIT = int(os.getenv('WAN22_HTTP_ERROR_BODY_LIMIT', '4000'))
 
 
 def decode_encryption_key():
@@ -296,7 +298,19 @@ def queue_prompt(prompt):
     payload = {'prompt': prompt, 'client_id': client_id}
     data = json.dumps(payload).encode('utf-8')
     req = urllib.request.Request(url, data=data)
-    return json.loads(urllib.request.urlopen(req).read())
+    try:
+        return json.loads(urllib.request.urlopen(req).read())
+    except urllib.error.HTTPError as error:
+        body = ''
+        try:
+            body = error.read().decode('utf-8', errors='replace')
+        except Exception as read_error:
+            body = f'<failed to read response body: {read_error}>'
+
+        if len(body) > HTTP_ERROR_BODY_LIMIT:
+            body = f'{body[:HTTP_ERROR_BODY_LIMIT]}...<truncated>'
+
+        raise Exception(f'ComfyUI /prompt returned HTTP {error.code} {error.reason}: {body}') from error
 
 
 def get_history(prompt_id):
