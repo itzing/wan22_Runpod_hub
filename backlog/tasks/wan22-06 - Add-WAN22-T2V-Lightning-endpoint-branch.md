@@ -1,7 +1,7 @@
 ---
 id: wan22-06
 title: Add WAN22 T2V Lightning endpoint branch
-status: pending
+status: done
 created: 2026-07-04T20:11:00Z
 labels: [wan22, runpod, t2v, lightning, comfyui]
 ---
@@ -23,4 +23,8 @@ Add a separate Wan 2.2 text-to-video endpoint path using LightX2V T2V A14B 4-ste
 ## Notes
 
 - First model candidate: `lightx2v/Wan2.2-Lightning/Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V1.1`.
+- Provider image: `itzing/wan22-t2v-models:v1`
+- Provider digest: `sha256:5ff45f7b58261dae85f9492d816c82a4684226973a202ed5f1b5e9104b079875`
+- Endpoint branch commit: `f6fe5e9`
+- Validation completed: Python syntax, workflow JSON parse, T2V workflow source checks, T2V prompt construction smoke, provider image content check, provider image push.
 - Rollback: revert the endpoint branch commits or switch the RunPod endpoint back to the previous image/branch.

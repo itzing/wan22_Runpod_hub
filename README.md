@@ -46,7 +46,11 @@ The branch uses the Wan 2.2 T2V A14B FP8 high/low diffusion pair plus the LightX
 - `Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V1.1/high_noise_model.safetensors`
 - `Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V1.1/low_noise_model.safetensors`
 
-Those files are packaged once into the Docker Hub model-provider image `itzing/wan22-t2v-models:v1`. The endpoint Dockerfile copies the diffusion models and baked-in Lightning LoRAs from that provider image so RunPod endpoint builds do not download roughly 31 GB of immutable model files from Hugging Face during every deployment.
+Those files are packaged once into the Docker Hub model-provider image `itzing/wan22-t2v-models:v1`:
+
+- digest: `sha256:5ff45f7b58261dae85f9492d816c82a4684226973a202ed5f1b5e9104b079875`
+
+The endpoint Dockerfile copies the diffusion models and baked-in Lightning LoRAs from that provider image so RunPod endpoint builds do not download roughly 31 GB of immutable model files from Hugging Face during every deployment.
 
 To rebuild the T2V model-provider image:
 
