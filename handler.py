@@ -3,6 +3,7 @@ import json
 import logging
 import mimetypes
 import os
+import shutil
 import time
 import urllib.error
 import urllib.parse
@@ -32,6 +33,11 @@ HIGH_MODEL_LOADER_NODE_ID = '230'
 LOW_MODEL_LOADER_NODE_ID = '235'
 HTTP_ERROR_BODY_LIMIT = int(os.getenv('WAN22_HTTP_ERROR_BODY_LIMIT', '4000'))
 COMFYUI_INPUT_DIR = os.getenv('COMFYUI_INPUT_DIR', '/ComfyUI/input')
+COMFYUI_RUNTIME_DIRS = [
+    COMFYUI_INPUT_DIR,
+    '/ComfyUI/output',
+    '/ComfyUI/temp',
+]
 
 
 def decode_encryption_key():
@@ -537,9 +543,50 @@ def detect_video_mime(path_value):
     return mime or 'video/mp4'
 
 
+def cleanup_directory_contents(directory_path):
+    if not directory_path:
+        return
+
+    target = os.path.abspath(directory_path)
+    if target == os.path.abspath(os.sep):
+        logger.warning(f'Skipping cleanup for unsafe directory: {directory_path}')
+        return
+    if not os.path.isdir(target):
+        return
+
+    for name in os.listdir(target):
+        path = os.path.join(target, name)
+        try:
+            if os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                os.remove(path)
+        except FileNotFoundError:
+            pass
+        except Exception as cleanup_error:
+            logger.warning(f'Cleanup warning for {path}: {cleanup_error}')
+
+
+def cleanup_runtime_artifacts(task_id):
+    if task_id:
+        task_path = os.path.abspath(task_id)
+        if os.path.exists(task_path):
+            try:
+                if os.path.isdir(task_path):
+                    shutil.rmtree(task_path, ignore_errors=True)
+                else:
+                    os.remove(task_path)
+            except Exception as cleanup_error:
+                logger.warning(f'Cleanup warning for {task_path}: {cleanup_error}')
+
+    for directory_path in COMFYUI_RUNTIME_DIRS:
+        cleanup_directory_contents(directory_path)
+
+
 def handler(job):
     job_input = job.get('input', {})
     logger.info(f'Received job input keys: {sorted(job_input.keys())}')
+    task_id = f'task_{uuid.uuid4()}'
 
     try:
         job_input = decrypt_secure_input(job_input)
@@ -548,7 +595,6 @@ def handler(job):
         if not secure_source_image:
             raise Exception('WAN22 secure contract requires media_inputs with role source_image')
 
-        task_id = f'task_{uuid.uuid4()}'
         input_ext = mimetypes.guess_extension(secure_source_image.get('mime') or 'image/png') or '.png'
         image_path, image_file_name = get_comfy_input_image_target(task_id, input_ext)
         decrypt_media_input_to_file(secure_source_image, image_path)
@@ -645,6 +691,8 @@ def handler(job):
         return {
             'transport_result': normalize_transport_failure('WAN22_SECURE_TRANSPORT_FAILED', str(error))
         }
+    finally:
+        cleanup_runtime_artifacts(task_id)
 
 
 runpod.serverless.start({'handler': handler})
