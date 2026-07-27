@@ -31,6 +31,8 @@ UNSAFE_OPTIMIZATION_CLASSES = {
 MAX_LORA_PAIRS = int(os.getenv('WAN22_MAX_LORA_PAIRS', '4'))
 HIGH_MODEL_LOADER_NODE_ID = '230'
 LOW_MODEL_LOADER_NODE_ID = '235'
+T2V_HIGH_LIGHTNING_LORA_NODE_ID = '67'
+T2V_LOW_LIGHTNING_LORA_NODE_ID = '68'
 HTTP_ERROR_BODY_LIMIT = int(os.getenv('WAN22_HTTP_ERROR_BODY_LIMIT', '4000'))
 COMFYUI_INPUT_DIR = os.getenv('COMFYUI_INPUT_DIR', '/ComfyUI/input')
 COMFYUI_RUNTIME_DIRS = [
@@ -539,6 +541,37 @@ def apply_dynamic_lora_pairs_to_workflow(prompt, lora_pairs):
     return prompt
 
 
+def apply_dynamic_lora_pairs_to_t2v_workflow(prompt, lora_pairs):
+    high_loras = [
+        (pair['high'], pair['high_weight'])
+        for pair in lora_pairs
+        if pair.get('high')
+    ]
+    low_loras = [
+        (pair['low'], pair['low_weight'])
+        for pair in lora_pairs
+        if pair.get('low')
+    ]
+
+    apply_lora_chain_to_model_loader(
+        prompt,
+        high_loras,
+        T2V_HIGH_LIGHTNING_LORA_NODE_ID,
+        3700,
+        'T2V high',
+    )
+    apply_lora_chain_to_model_loader(
+        prompt,
+        low_loras,
+        T2V_LOW_LIGHTNING_LORA_NODE_ID,
+        3800,
+        'T2V low',
+    )
+
+    logger.info(f'Dynamic T2V LoRA pairs configured: high={len(high_loras)}, low={len(low_loras)}')
+    return prompt
+
+
 def detect_video_mime(path_value):
     mime, _ = mimetypes.guess_type(path_value)
     return mime or 'video/mp4'
@@ -635,6 +668,9 @@ def handler(job):
         if is_t2v_request(job_input):
             prompt = load_workflow('/wan22_t2v.json')
             prompt = configure_t2v_workflow(prompt, job_input)
+            lora_pairs = normalize_lora_pairs(job_input)
+            if lora_pairs:
+                prompt = apply_dynamic_lora_pairs_to_t2v_workflow(prompt, lora_pairs)
         else:
             secure_source_image = get_secure_media_input(job_input, ['source_image'])
             if not secure_source_image:
