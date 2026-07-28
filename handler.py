@@ -35,12 +35,19 @@ T2V_HIGH_LIGHTNING_LORA_NODE_ID = '67'
 T2V_LOW_LIGHTNING_LORA_NODE_ID = '68'
 HTTP_ERROR_BODY_LIMIT = int(os.getenv('WAN22_HTTP_ERROR_BODY_LIMIT', '4000'))
 COMFYUI_INPUT_DIR = os.getenv('COMFYUI_INPUT_DIR', '/ComfyUI/input')
+COMFYUI_OUTPUT_DIR = os.getenv('COMFYUI_OUTPUT_DIR', '/ComfyUI/output')
+COMFYUI_TEMP_DIR = os.getenv('COMFYUI_TEMP_DIR', '/ComfyUI/temp')
 COMFYUI_RUNTIME_DIRS = [
     COMFYUI_INPUT_DIR,
-    '/ComfyUI/output',
-    '/ComfyUI/temp',
+    COMFYUI_OUTPUT_DIR,
+    COMFYUI_TEMP_DIR,
 ]
 T2V_MODE_VALUES = {'t2v', 'text_to_video', 'wan22-t2v'}
+CONTINUATION_FRAME_BATCH_NODE_ID = '901001'
+CONTINUATION_FRAME_SAVE_NODE_ID = '901002'
+CONTINUATION_FRAME_SOURCE_NODE_ID = '323'
+CONTINUATION_FRAME_ROLE = 'continuation_frame'
+CONTINUATION_FRAME_OFFSET_FROM_END = int(os.getenv('WAN22_CONTINUATION_FRAME_OFFSET_FROM_END', '3'))
 
 
 def decode_encryption_key():
@@ -127,7 +134,7 @@ def decrypt_secure_input(job_input):
     return job_input
 
 
-def encrypt_result_to_transport(plaintext_bytes, job_id, model_id, attempt_id, output_path, kind='video', mime='video/mp4'):
+def encrypt_result_to_transport(plaintext_bytes, job_id, model_id, attempt_id, output_path, kind='video', mime='video/mp4', role='result'):
     master_key = decode_encryption_key()
     dek = os.urandom(32)
     binding = {
@@ -135,7 +142,7 @@ def encrypt_result_to_transport(plaintext_bytes, job_id, model_id, attempt_id, o
         'model_id': model_id,
         'attempt_id': attempt_id,
         'direction': 'endpoint_to_engui',
-        'role': 'result',
+        'role': role,
         'kind': kind,
     }
 
@@ -308,6 +315,54 @@ def get_secure_media_input(job_input, roles):
     return None
 
 
+def should_return_continuation_frame(job_input):
+    return job_input.get('return_continuation_frame') is True
+
+
+def get_requested_length(job_input):
+    try:
+        return max(1, int(job_input.get('length', 81)))
+    except (TypeError, ValueError):
+        return 81
+
+
+def continuation_frame_batch_index(job_input):
+    return max(0, get_requested_length(job_input) - CONTINUATION_FRAME_OFFSET_FROM_END)
+
+
+def add_continuation_frame_output(prompt, job_input, task_id):
+    if CONTINUATION_FRAME_SOURCE_NODE_ID not in prompt:
+        raise Exception(f'Continuation frame source node {CONTINUATION_FRAME_SOURCE_NODE_ID} is missing from workflow')
+
+    prompt[CONTINUATION_FRAME_BATCH_NODE_ID] = {
+        'inputs': {
+            'image': [CONTINUATION_FRAME_SOURCE_NODE_ID, 0],
+            'batch_index': continuation_frame_batch_index(job_input),
+            'length': 1,
+        },
+        'class_type': 'ImageFromBatch',
+        '_meta': {
+            'title': 'Engui Sequence Continuation Frame',
+        },
+    }
+    prompt[CONTINUATION_FRAME_SAVE_NODE_ID] = {
+        'inputs': {
+            'filename_prefix': f'{task_id}/engui_sequence_continuation',
+            'images': [CONTINUATION_FRAME_BATCH_NODE_ID, 0],
+        },
+        'class_type': 'SaveImage',
+        '_meta': {
+            'title': 'Save Engui Sequence Continuation PNG',
+        },
+    }
+    logger.info(
+        'Continuation frame output enabled at batch index %s',
+        prompt[CONTINUATION_FRAME_BATCH_NODE_ID]['inputs']['batch_index'],
+    )
+
+    return prompt
+
+
 def queue_prompt(prompt):
     url = f'http://{server_address}:8188/prompt'
     logger.info(f'Queueing prompt to: {url}')
@@ -336,7 +391,22 @@ def get_history(prompt_id):
         return json.loads(response.read())
 
 
-def get_video_output_paths(ws, prompt):
+def resolve_comfy_output_path(item):
+    fullpath = item.get('fullpath')
+    if fullpath:
+        return fullpath
+
+    filename = item.get('filename')
+    if not filename:
+        return None
+
+    subfolder = item.get('subfolder') or ''
+    output_type = item.get('type') or 'output'
+    base_dir = COMFYUI_TEMP_DIR if output_type == 'temp' else COMFYUI_OUTPUT_DIR
+    return os.path.join(base_dir, subfolder, filename)
+
+
+def get_comfy_output_paths(ws, prompt):
     prompt_id = queue_prompt(prompt)['prompt_id']
     while True:
         out = ws.recv()
@@ -350,15 +420,46 @@ def get_video_output_paths(ws, prompt):
                 break
 
     history = get_history(prompt_id)[prompt_id]
-    output_paths = []
-    for node_output in history.get('outputs', {}).values():
+    video_paths = []
+    image_paths_by_node = {}
+    for node_id, node_output in history.get('outputs', {}).items():
         if 'gifs' in node_output:
             for video in node_output['gifs']:
-                fullpath = video.get('fullpath')
+                fullpath = resolve_comfy_output_path(video)
                 if fullpath:
-                    output_paths.append(fullpath)
+                    video_paths.append(fullpath)
+        if 'images' in node_output:
+            node_images = []
+            for image in node_output['images']:
+                fullpath = resolve_comfy_output_path(image)
+                if fullpath:
+                    node_images.append(fullpath)
+            if node_images:
+                image_paths_by_node.setdefault(node_id, []).extend(node_images)
 
-    return output_paths
+    return {
+        'video_paths': video_paths,
+        'image_paths_by_node': image_paths_by_node,
+    }
+
+def get_video_output_paths(ws, prompt):
+    return get_comfy_output_paths(ws, prompt)['video_paths']
+
+
+def continuation_frame_output_path(comfy_outputs):
+    paths = comfy_outputs.get('image_paths_by_node', {}).get(CONTINUATION_FRAME_SAVE_NODE_ID) or []
+    if not paths:
+        return None
+    return paths[0]
+
+
+def transport_artifact_output_path(transport_request, role):
+    output_dir = transport_request['output_dir']
+    output_file_name = transport_request['output_file_name']
+    stem, extension = os.path.splitext(output_file_name)
+    if not extension:
+        extension = '.bin'
+    return os.path.join(output_dir, f'{stem}__{role}{extension}')
 
 
 def load_workflow(workflow_path):
@@ -707,6 +808,9 @@ def handler(job):
             if lora_pairs:
                 prompt = apply_dynamic_lora_pairs_to_workflow(prompt, lora_pairs)
 
+            if should_return_continuation_frame(job_input):
+                prompt = add_continuation_frame_output(prompt, job_input, task_id)
+
         ws_url = f'ws://{server_address}:8188/ws?clientId={client_id}'
         http_url = f'http://{server_address}:8188/'
 
@@ -737,10 +841,11 @@ def handler(job):
                 time.sleep(5)
 
         try:
-            video_paths = get_video_output_paths(ws, prompt)
+            comfy_outputs = get_comfy_output_paths(ws, prompt)
         finally:
             ws.close()
 
+        video_paths = comfy_outputs['video_paths']
         if not video_paths:
             raise Exception('No generated video was found in ComfyUI history')
 
@@ -756,16 +861,38 @@ def handler(job):
         output_path = os.path.join(transport_request['output_dir'], transport_request['output_file_name'])
         mime = detect_video_mime(result_path)
 
-        return {
-            'transport_result': encrypt_result_to_transport(
-                result_bytes,
+        transport_result = encrypt_result_to_transport(
+            result_bytes,
+            job_id,
+            model_id,
+            attempt_id,
+            output_path,
+            'video',
+            mime,
+        )
+
+        if should_return_continuation_frame(job_input) and not is_t2v_request(job_input):
+            continuation_path = continuation_frame_output_path(comfy_outputs)
+            if not continuation_path or not os.path.exists(continuation_path):
+                raise Exception('Continuation frame was requested but no generated PNG was found in ComfyUI history')
+
+            with open(continuation_path, 'rb') as file:
+                continuation_bytes = file.read()
+
+            continuation_output_path = transport_artifact_output_path(transport_request, CONTINUATION_FRAME_ROLE)
+            transport_result.setdefault('artifacts', {})[CONTINUATION_FRAME_ROLE] = encrypt_result_to_transport(
+                continuation_bytes,
                 job_id,
                 model_id,
                 attempt_id,
-                output_path,
-                'video',
-                mime,
-            )
+                continuation_output_path,
+                'image',
+                'image/png',
+                CONTINUATION_FRAME_ROLE,
+            )['result_media']
+
+        return {
+            'transport_result': transport_result,
         }
     except Exception as error:
         logger.exception('WAN22 secure transport handler failed')
