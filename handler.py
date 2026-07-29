@@ -45,6 +45,10 @@ CONTINUATION_FRAME_SAVE_NODE_ID = '901002'
 CONTINUATION_FRAME_SOURCE_NODE_ID = '323'
 CONTINUATION_FRAME_ROLE = 'continuation_frame'
 CONTINUATION_FRAME_OFFSET_FROM_END = int(os.getenv('WAN22_CONTINUATION_FRAME_OFFSET_FROM_END', '7'))
+SIGMA_SHIFT_NODE_IDS = ('362', '363')
+SIGMA_SHIFT_DEFAULT = 5
+SIGMA_SHIFT_MIN = 3
+SIGMA_SHIFT_MAX = 8
 
 
 def decode_encryption_key():
@@ -325,6 +329,30 @@ def get_requested_length(job_input):
 
 def continuation_frame_batch_index(job_input):
     return max(0, get_requested_length(job_input) - CONTINUATION_FRAME_OFFSET_FROM_END)
+
+
+def get_sigma_shift(job_input):
+    raw_shift = job_input.get('sigma_shift', SIGMA_SHIFT_DEFAULT)
+    try:
+        shift = int(float(raw_shift))
+    except (TypeError, ValueError):
+        logger.warning(f'Invalid sigma_shift value {raw_shift!r}; using default {SIGMA_SHIFT_DEFAULT}')
+        return SIGMA_SHIFT_DEFAULT
+
+    return max(SIGMA_SHIFT_MIN, min(SIGMA_SHIFT_MAX, shift))
+
+
+def apply_sigma_shift_to_workflow(prompt, job_input):
+    shift = get_sigma_shift(job_input)
+    for node_id in SIGMA_SHIFT_NODE_IDS:
+        node = prompt.get(node_id)
+        if not node:
+            logger.warning(f'Sigma shift node {node_id} is missing from workflow')
+            continue
+        node.setdefault('inputs', {})['shift'] = shift
+
+    logger.info(f'Sigma shift set to: {shift}')
+    return prompt
 
 
 def add_continuation_frame_output(prompt, job_input, task_id):
@@ -715,6 +743,7 @@ def handler(job):
         prompt['830']['inputs']['cfg'] = job_input['cfg']
         prompt['849']['inputs']['value'] = job_input['width']
         prompt['848']['inputs']['value'] = job_input['height']
+        prompt = apply_sigma_shift_to_workflow(prompt, job_input)
 
         steps = int(job_input.get('steps', 4))
         if '834' in prompt:
