@@ -1,7 +1,7 @@
 # Use specific version of nvidia cuda image
 FROM wlsdml1114/my-comfy-models:v1 AS model_provider
 FROM itzing/wan22-dasiwa-models:v1 AS dasiwa_model_provider
-FROM wlsdml1114/multitalk-base:1.4 as runtime
+FROM wlsdml1114/multitalk-base:1.4 AS runtime
 
 RUN pip install runpod websocket-client
 

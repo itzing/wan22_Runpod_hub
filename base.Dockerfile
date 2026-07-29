@@ -1,5 +1,5 @@
 # Use specific version of nvidia cuda image
-FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04 as runtime
+FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04 AS runtime
 
 # Remove any third-party apt sources to avoid issues with expiring keys.
 RUN rm -f /etc/apt/sources.list.d/*.list
