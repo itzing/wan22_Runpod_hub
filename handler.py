@@ -49,6 +49,8 @@ SIGMA_SHIFT_NODE_IDS = ('362', '363')
 SIGMA_SHIFT_DEFAULT = 5
 SIGMA_SHIFT_MIN = 3
 SIGMA_SHIFT_MAX = 8
+OUTPUT_FPS_DEFAULT = 16
+OUTPUT_FPS_ALLOWED = {16, 32}
 
 
 def decode_encryption_key():
@@ -342,6 +344,21 @@ def get_sigma_shift(job_input):
     return max(SIGMA_SHIFT_MIN, min(SIGMA_SHIFT_MAX, shift))
 
 
+def get_output_fps(job_input):
+    raw_fps = job_input.get('output_fps', job_input.get('fps', OUTPUT_FPS_DEFAULT))
+    try:
+        fps = int(float(raw_fps))
+    except (TypeError, ValueError):
+        logger.warning(f'Invalid output FPS value {raw_fps!r}; using default {OUTPUT_FPS_DEFAULT}')
+        return OUTPUT_FPS_DEFAULT
+
+    if fps not in OUTPUT_FPS_ALLOWED:
+        logger.warning(f'Unsupported output FPS value {raw_fps!r}; using default {OUTPUT_FPS_DEFAULT}')
+        return OUTPUT_FPS_DEFAULT
+
+    return fps
+
+
 def apply_sigma_shift_to_workflow(prompt, job_input):
     shift = get_sigma_shift(job_input)
     for node_id in SIGMA_SHIFT_NODE_IDS:
@@ -352,6 +369,22 @@ def apply_sigma_shift_to_workflow(prompt, job_input):
         node.setdefault('inputs', {})['shift'] = shift
 
     logger.info(f'Sigma shift set to: {shift}')
+    return prompt
+
+
+def apply_output_fps_to_workflow(prompt, job_input):
+    fps = get_output_fps(job_input)
+    updated_nodes = 0
+    for node_id, node in prompt.items():
+        if node.get('class_type') != 'VHS_VideoCombine':
+            continue
+        node.setdefault('inputs', {})['frame_rate'] = fps
+        updated_nodes += 1
+
+    if updated_nodes == 0:
+        raise Exception('VHS_VideoCombine node is missing from workflow')
+
+    logger.info(f'Output FPS set to: {fps}')
     return prompt
 
 
@@ -744,6 +777,7 @@ def handler(job):
         prompt['849']['inputs']['value'] = job_input['width']
         prompt['848']['inputs']['value'] = job_input['height']
         prompt = apply_sigma_shift_to_workflow(prompt, job_input)
+        prompt = apply_output_fps_to_workflow(prompt, job_input)
 
         steps = int(job_input.get('steps', 4))
         if '834' in prompt:
