@@ -46,7 +46,10 @@ CONTINUATION_FRAME_SOURCE_NODE_ID = '323'
 CONTINUATION_FRAME_ROLE = 'continuation_frame'
 CONTINUATION_FRAME_OFFSET_FROM_END = int(os.getenv('WAN22_CONTINUATION_FRAME_OFFSET_FROM_END', '7'))
 LOOPED_TRIM_BATCH_NODE_ID = '901101'
+LOOPED_END_LOAD_NODE_ID = '901102'
+LOOPED_END_SCALE_NODE_ID = '901103'
 LOOPED_FIRST_LAST_NODE_ID = '481'
+LOOPED_START_SCALE_NODE_ID = '847'
 LOOPED_DECODE_NODE_ID = '323'
 SIGMA_SHIFT_NODE_IDS = ('362', '363')
 SIGMA_SHIFT_DEFAULT = 5
@@ -313,6 +316,30 @@ def get_comfy_input_image_target(task_id, input_ext):
     return image_path, image_file_name
 
 
+def get_comfy_looped_end_image_target(task_id):
+    image_file_name = f'{task_id}_looped_end_image.png'
+    image_path = os.path.join(COMFYUI_INPUT_DIR, image_file_name)
+    return image_path, image_file_name
+
+
+def create_looped_end_image(input_image_path, output_image_path):
+    from PIL import Image, ImageEnhance
+
+    with Image.open(input_image_path) as source_image:
+        image = source_image.copy()
+
+    width, height = image.size
+    if width > 1 and height > 1:
+        resampling = getattr(getattr(Image, 'Resampling', Image), 'LANCZOS')
+        image = image.crop((1, 0, width, height)).resize((width, height), resampling)
+    else:
+        image = ImageEnhance.Brightness(image).enhance(1.01)
+
+    os.makedirs(os.path.dirname(output_image_path), exist_ok=True)
+    image.save(output_image_path, format='PNG')
+    return output_image_path
+
+
 def get_secure_media_input(job_input, roles):
     media_inputs = job_input.get('media_inputs') or []
     for descriptor in media_inputs:
@@ -401,7 +428,7 @@ def apply_output_fps_to_workflow(prompt, job_input):
     return prompt
 
 
-def apply_looped_output_to_workflow(prompt, job_input):
+def apply_looped_output_to_workflow(prompt, job_input, looped_end_image_file_name=None):
     if not is_looped_request(job_input):
         return prompt
 
@@ -412,7 +439,38 @@ def apply_looped_output_to_workflow(prompt, job_input):
     start_image = first_last_node.setdefault('inputs', {}).get('start_image')
     if not start_image:
         raise Exception('Looped output requires an existing start_image connection')
-    first_last_node['inputs']['end_image'] = start_image
+
+    if looped_end_image_file_name:
+        start_scale_node = prompt.get(LOOPED_START_SCALE_NODE_ID)
+        if not start_scale_node:
+            raise Exception(f'Looped start scale node {LOOPED_START_SCALE_NODE_ID} is missing from workflow')
+
+        start_scale_inputs = start_scale_node.get('inputs') or {}
+        prompt[LOOPED_END_LOAD_NODE_ID] = {
+            'inputs': {
+                'image': looped_end_image_file_name,
+            },
+            'class_type': 'LoadImage',
+            '_meta': {
+                'title': 'Engui Looped End Image',
+            },
+        }
+        prompt[LOOPED_END_SCALE_NODE_ID] = {
+            'inputs': {
+                'upscale_method': start_scale_inputs.get('upscale_method', 'lanczos'),
+                'width': start_scale_inputs['width'],
+                'height': start_scale_inputs['height'],
+                'crop': start_scale_inputs.get('crop', 'center'),
+                'image': [LOOPED_END_LOAD_NODE_ID, 0],
+            },
+            'class_type': start_scale_node.get('class_type', 'ImageScale'),
+            '_meta': {
+                'title': 'Engui Looped End Image Scale',
+            },
+        }
+        first_last_node['inputs']['end_image'] = [LOOPED_END_SCALE_NODE_ID, 0]
+    else:
+        first_last_node['inputs']['end_image'] = start_image
 
     if LOOPED_DECODE_NODE_ID not in prompt:
         raise Exception(f'Looped output decode node {LOOPED_DECODE_NODE_ID} is missing from workflow')
@@ -817,6 +875,10 @@ def handler(job):
         input_ext = mimetypes.guess_extension(secure_source_image.get('mime') or 'image/png') or '.png'
         image_path, image_file_name = get_comfy_input_image_target(task_id, input_ext)
         decrypt_media_input_to_file(secure_source_image, image_path)
+        looped_end_image_file_name = None
+        if is_looped_request(job_input):
+            looped_end_image_path, looped_end_image_file_name = get_comfy_looped_end_image_target(task_id)
+            create_looped_end_image(image_path, looped_end_image_path)
 
         lora_pairs = normalize_lora_pairs(job_input)
         workflow_file = '/wan22_nolora.json'
@@ -834,7 +896,7 @@ def handler(job):
         prompt['848']['inputs']['value'] = job_input['height']
         prompt = apply_sigma_shift_to_workflow(prompt, job_input)
         prompt = apply_output_fps_to_workflow(prompt, job_input)
-        prompt = apply_looped_output_to_workflow(prompt, job_input)
+        prompt = apply_looped_output_to_workflow(prompt, job_input, looped_end_image_file_name)
 
         steps = int(job_input.get('steps', 4))
         if '834' in prompt:
