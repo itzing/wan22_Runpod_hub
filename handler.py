@@ -45,6 +45,9 @@ CONTINUATION_FRAME_SAVE_NODE_ID = '901002'
 CONTINUATION_FRAME_SOURCE_NODE_ID = '323'
 CONTINUATION_FRAME_ROLE = 'continuation_frame'
 CONTINUATION_FRAME_OFFSET_FROM_END = int(os.getenv('WAN22_CONTINUATION_FRAME_OFFSET_FROM_END', '7'))
+LOOPED_TRIM_BATCH_NODE_ID = '901101'
+LOOPED_FIRST_LAST_NODE_ID = '481'
+LOOPED_DECODE_NODE_ID = '323'
 SIGMA_SHIFT_NODE_IDS = ('362', '363')
 SIGMA_SHIFT_DEFAULT = 5
 SIGMA_SHIFT_MIN = 3
@@ -322,11 +325,21 @@ def should_return_continuation_frame(job_input):
     return job_input.get('return_continuation_frame') is True
 
 
+def is_looped_request(job_input):
+    looped = job_input.get('looped')
+    return looped is True or looped == 'true'
+
+
 def get_requested_length(job_input):
     try:
         return max(1, int(job_input.get('length', 81)))
     except (TypeError, ValueError):
         return 81
+
+
+def get_wan_frame_count(job_input):
+    length = get_requested_length(job_input)
+    return ((length - 1) // 4) * 4 + 1
 
 
 def continuation_frame_batch_index(job_input):
@@ -385,6 +398,49 @@ def apply_output_fps_to_workflow(prompt, job_input):
         raise Exception('VHS_VideoCombine node is missing from workflow')
 
     logger.info(f'Output FPS set to: {fps}')
+    return prompt
+
+
+def apply_looped_output_to_workflow(prompt, job_input):
+    if not is_looped_request(job_input):
+        return prompt
+
+    first_last_node = prompt.get(LOOPED_FIRST_LAST_NODE_ID)
+    if not first_last_node:
+        raise Exception(f'Looped frame node {LOOPED_FIRST_LAST_NODE_ID} is missing from workflow')
+
+    start_image = first_last_node.setdefault('inputs', {}).get('start_image')
+    if not start_image:
+        raise Exception('Looped output requires an existing start_image connection')
+    first_last_node['inputs']['end_image'] = start_image
+
+    if LOOPED_DECODE_NODE_ID not in prompt:
+        raise Exception(f'Looped output decode node {LOOPED_DECODE_NODE_ID} is missing from workflow')
+
+    trim_length = max(1, get_wan_frame_count(job_input) - 1)
+    prompt[LOOPED_TRIM_BATCH_NODE_ID] = {
+        'inputs': {
+            'image': [LOOPED_DECODE_NODE_ID, 0],
+            'batch_index': 0,
+            'length': trim_length,
+        },
+        'class_type': 'ImageFromBatch',
+        '_meta': {
+            'title': 'Engui Looped Output Frames',
+        },
+    }
+
+    updated_nodes = 0
+    for node in prompt.values():
+        if node.get('class_type') != 'VHS_VideoCombine':
+            continue
+        node.setdefault('inputs', {})['images'] = [LOOPED_TRIM_BATCH_NODE_ID, 0]
+        updated_nodes += 1
+
+    if updated_nodes == 0:
+        raise Exception('VHS_VideoCombine node is missing from workflow')
+
+    logger.info(f'Looped output enabled; MP4 assembly frame count set to {trim_length}')
     return prompt
 
 
@@ -778,6 +834,7 @@ def handler(job):
         prompt['848']['inputs']['value'] = job_input['height']
         prompt = apply_sigma_shift_to_workflow(prompt, job_input)
         prompt = apply_output_fps_to_workflow(prompt, job_input)
+        prompt = apply_looped_output_to_workflow(prompt, job_input)
 
         steps = int(job_input.get('steps', 4))
         if '834' in prompt:
