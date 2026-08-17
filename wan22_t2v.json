@@ -43,7 +43,7 @@
   },
   "37": {
     "inputs": {
-      "unet_name": "wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors",
+      "unet_name": "SmoothMix_T2V_High_v4.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -73,9 +73,9 @@
   },
   "54": {
     "inputs": {
-      "shift": 5.0,
+      "shift": 8.0,
       "model": [
-        "67",
+        "37",
         0
       ]
     },
@@ -86,9 +86,9 @@
   },
   "55": {
     "inputs": {
-      "shift": 5.0,
+      "shift": 8.0,
       "model": [
-        "68",
+        "56",
         0
       ]
     },
@@ -99,7 +99,7 @@
   },
   "56": {
     "inputs": {
-      "unet_name": "wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",
+      "unet_name": "SmoothMix_T2V_Low_v4.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -112,12 +112,12 @@
       "add_noise": "enable",
       "noise_seed": 42,
       "control_after_generate": "fixed",
-      "steps": 4,
+      "steps": 6,
       "cfg": 1.0,
       "sampler_name": "euler",
       "scheduler": "simple",
       "start_at_step": 0,
-      "end_at_step": 2,
+      "end_at_step": 3,
       "return_with_leftover_noise": "enable",
       "model": [
         "54",
@@ -145,13 +145,16 @@
     "inputs": {
       "add_noise": "disable",
       "noise_seed": 42,
-      "control_after_generate": "fixed",
-      "steps": 4,
+      "steps": 6,
       "cfg": 1.0,
+      "nag_scale": 30.0,
+      "nag_tau": 2.5,
+      "nag_alpha": 0.25,
+      "nag_sigma_end": 1.0,
       "sampler_name": "euler",
       "scheduler": "simple",
-      "start_at_step": 2,
-      "end_at_step": 4,
+      "start_at_step": 3,
+      "end_at_step": 6,
       "return_with_leftover_noise": "disable",
       "model": [
         "55",
@@ -165,14 +168,18 @@
         "7",
         0
       ],
+      "nag_negative": [
+        "7",
+        0
+      ],
       "latent_image": [
         "57",
         0
       ]
     },
-    "class_type": "KSamplerAdvanced",
+    "class_type": "KSamplerWithNAG (Advanced)",
     "_meta": {
-      "title": "Low Noise Sampler"
+      "title": "Low Noise NAG Sampler"
     }
   },
   "59": {
@@ -189,7 +196,7 @@
   },
   "60": {
     "inputs": {
-      "frame_rate": 16,
+      "frame_rate": 32,
       "loop_count": 0,
       "filename_prefix": "wan22-t2v-lightning",
       "format": "video/h264-mp4",
@@ -207,34 +214,6 @@
     "class_type": "VHS_VideoCombine",
     "_meta": {
       "title": "Video Combine"
-    }
-  },
-  "67": {
-    "inputs": {
-      "lora_name": "Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V1.1/high_noise_model.safetensors",
-      "strength_model": 1.0,
-      "model": [
-        "37",
-        0
-      ]
-    },
-    "class_type": "LoraLoaderModelOnly",
-    "_meta": {
-      "title": "High Lightning LoRA"
-    }
-  },
-  "68": {
-    "inputs": {
-      "lora_name": "Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V1.1/low_noise_model.safetensors",
-      "strength_model": 1.0,
-      "model": [
-        "56",
-        0
-      ]
-    },
-    "class_type": "LoraLoaderModelOnly",
-    "_meta": {
-      "title": "Low Lightning LoRA"
     }
   }
 }

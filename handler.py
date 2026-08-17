@@ -28,11 +28,13 @@ UNSAFE_OPTIMIZATION_CLASSES = {
     'TorchCompileModel',
     'TorchCompileModelWanVideoV2',
 }
-MAX_LORA_PAIRS = int(os.getenv('WAN22_MAX_LORA_PAIRS', '4'))
+MAX_LORA_PAIRS = int(os.getenv('WAN22_MAX_LORA_PAIRS', '0'))
 HIGH_MODEL_LOADER_NODE_ID = '230'
 LOW_MODEL_LOADER_NODE_ID = '235'
-T2V_HIGH_LIGHTNING_LORA_NODE_ID = '67'
-T2V_LOW_LIGHTNING_LORA_NODE_ID = '68'
+T2V_HIGH_MODEL_LOADER_NODE_ID = '37'
+T2V_LOW_MODEL_LOADER_NODE_ID = '56'
+T2V_HIGH_SHIFT_NODE_ID = '54'
+T2V_LOW_SHIFT_NODE_ID = '55'
 HTTP_ERROR_BODY_LIMIT = int(os.getenv('WAN22_HTTP_ERROR_BODY_LIMIT', '4000'))
 COMFYUI_INPUT_DIR = os.getenv('COMFYUI_INPUT_DIR', '/ComfyUI/input')
 COMFYUI_OUTPUT_DIR = os.getenv('COMFYUI_OUTPUT_DIR', '/ComfyUI/output')
@@ -544,7 +546,7 @@ def normalize_lora_pairs(job_input):
     if not isinstance(raw_lora_pairs, list):
         raise Exception('lora_pairs must be a list.')
 
-    if len(raw_lora_pairs) > MAX_LORA_PAIRS:
+    if MAX_LORA_PAIRS > 0 and len(raw_lora_pairs) > MAX_LORA_PAIRS:
         logger.warning(f'LoRA pair count {len(raw_lora_pairs)} exceeds max {MAX_LORA_PAIRS}. Truncating.')
         raw_lora_pairs = raw_lora_pairs[:MAX_LORA_PAIRS]
 
@@ -657,14 +659,14 @@ def apply_dynamic_lora_pairs_to_t2v_workflow(prompt, lora_pairs):
     apply_lora_chain_to_model_loader(
         prompt,
         high_loras,
-        T2V_HIGH_LIGHTNING_LORA_NODE_ID,
+        T2V_HIGH_MODEL_LOADER_NODE_ID,
         3700,
         'T2V high',
     )
     apply_lora_chain_to_model_loader(
         prompt,
         low_loras,
-        T2V_LOW_LIGHTNING_LORA_NODE_ID,
+        T2V_LOW_MODEL_LOADER_NODE_ID,
         3800,
         'T2V low',
     )
@@ -691,11 +693,22 @@ def get_negative_prompt(job_input):
     )
 
 
+def get_optional_float(job_input, *keys):
+    for key in keys:
+        value = job_input.get(key)
+        if value is None or value == '':
+            continue
+        return float(value)
+    return None
+
+
 def configure_t2v_workflow(prompt, job_input):
-    steps = max(2, int(job_input.get('steps', 4)))
+    steps = max(2, int(job_input.get('steps', 6)))
     split_step = max(1, min(steps - 1, round(steps * 0.5)))
     cfg = float(job_input.get('cfg', 1.0))
     seed = int(job_input['seed'])
+    sigma_shift = get_optional_float(job_input, 'sigma_shift', 'sigmaShift')
+    fps = get_optional_float(job_input, 'fps', 'output_fps', 'frame_rate')
 
     prompt['6']['inputs']['text'] = job_input['prompt']
     prompt['7']['inputs']['text'] = get_negative_prompt(job_input)
@@ -711,8 +724,13 @@ def configure_t2v_workflow(prompt, job_input):
     prompt['59']['inputs']['width'] = int(job_input['width'])
     prompt['59']['inputs']['height'] = int(job_input['height'])
     prompt['59']['inputs']['length'] = int(job_input.get('length', 81))
+    if sigma_shift is not None:
+        prompt[T2V_HIGH_SHIFT_NODE_ID]['inputs']['shift'] = sigma_shift
+        prompt[T2V_LOW_SHIFT_NODE_ID]['inputs']['shift'] = sigma_shift
+    if fps is not None:
+        prompt['60']['inputs']['frame_rate'] = fps
 
-    logger.info(f'T2V workflow configured: steps={steps}, split={split_step}, cfg={cfg}')
+    logger.info(f'T2V workflow configured: steps={steps}, split={split_step}, cfg={cfg}, sigma_shift={sigma_shift}, fps={fps}')
     return prompt
 
 

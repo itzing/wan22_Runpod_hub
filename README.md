@@ -35,31 +35,31 @@ This branch uses a single clean workflow and builds `lora_pairs` dynamically at 
 
 Recommended DaSiWa starting point: `steps=4`, `cfg=1`, no LightX2V/CausVid speed LoRA stacked on top.
 
-## Wan 2.2 T2V Lightning Branch Notes
+## Wan 2.2 T2V SmoothMix Branch Notes
 
 The `wan22-t2v-lightning-v1` branch provides a separate text-to-video endpoint path. It keeps text-to-video isolated from the DaSiWa image-to-video endpoint so the RunPod endpoint can be deployed, tested, and rolled back independently.
 
-The branch uses the Wan 2.2 T2V A14B FP8 high/low diffusion pair plus the LightX2V 4-step Lightning LoRA pair:
+The branch is prepared for the SmoothMix Wan 2.2 T2V high/low diffusion pair:
 
-- `wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors`
-- `wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors`
-- `Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V1.1/high_noise_model.safetensors`
-- `Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V1.1/low_noise_model.safetensors`
+- `SmoothMix_T2V_High_v4.safetensors`
+- `SmoothMix_T2V_Low_v4.safetensors`
 
-Those files are packaged once into the Docker Hub model-provider image `itzing/wan22-t2v-models:v1`:
+Those files should be packaged once into the Docker Hub model-provider image `itzing/wan22-smoothmix-t2v-models:v1`:
 
-- digest: `sha256:5ff45f7b58261dae85f9492d816c82a4684226973a202ed5f1b5e9104b079875`
+- digest: pending until the SmoothMix model files are available and the provider image is pushed
 
-The endpoint Dockerfile copies the diffusion models and baked-in Lightning LoRAs from that provider image so RunPod endpoint builds do not download roughly 31 GB of immutable model files from Hugging Face during every deployment.
+The endpoint Dockerfile copies the diffusion models and optional LoRAs from that provider image so RunPod endpoint builds do not download large immutable model files during every deployment. The base workflow does not bake in the old LightX2V Lightning LoRA pair; dynamic LoRAs are chained at runtime from `lora_pairs`.
 
 To rebuild the T2V model-provider image:
 
 ```bash
-docker build -f t2v-model-provider.Dockerfile -t itzing/wan22-t2v-models:v1 .
-docker push itzing/wan22-t2v-models:v1
+mkdir -p models/diffusion_models models/loras
+# Place SmoothMix_T2V_High_v4.safetensors and SmoothMix_T2V_Low_v4.safetensors in models/diffusion_models.
+docker build -f t2v-model-provider.Dockerfile -t itzing/wan22-smoothmix-t2v-models:v1 .
+docker push itzing/wan22-smoothmix-t2v-models:v1
 ```
 
-T2V requests should set `mode` to `t2v` and do not need `media_inputs` or a `source_image`. Recommended first-run values are `steps=4`, `cfg=1`, `length=81`, with dimensions such as `832x480`.
+T2V requests should set `mode` to `t2v` and do not need `media_inputs` or a `source_image`. Recommended first-run values are `steps=6`, `cfg=1`, `sigma_shift=8`, `length=81`, `fps=32`, with dimensions such as `832x480`.
 
 ## ✨ Key Features
 
