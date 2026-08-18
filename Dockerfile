@@ -1,6 +1,6 @@
 # Use specific version of nvidia cuda image
 FROM wlsdml1114/my-comfy-models:v1 AS model_provider
-FROM itzing/wan22-smoothmix-t2v-models:v1 AS t2v_model_provider
+FROM itzing/wan22-t2v-lightx2v-models:v1 AS t2v_model_provider
 FROM wlsdml1114/multitalk-base:1.4 as runtime
 
 RUN pip install runpod websocket-client
@@ -44,15 +44,12 @@ RUN cd /ComfyUI/custom_nodes && \
     cd ComfyUI-WanVideoWrapper && \
     pip install -r requirements.txt
 
-RUN cd /ComfyUI/custom_nodes && \
-    git clone https://github.com/scottmudge/ComfyUI-NAG && \
-    cd ComfyUI-NAG && \
-    if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-
 COPY --from=model_provider /models/vae /ComfyUI/models/vae
 COPY --from=model_provider /models/text_encoders /ComfyUI/models/text_encoders
 COPY --from=t2v_model_provider /models/diffusion_models /ComfyUI/models/diffusion_models
 COPY --from=t2v_model_provider /models/loras /ComfyUI/models/loras
+COPY --from=t2v_model_provider /models/text_encoders /ComfyUI/models/text_encoders
+COPY --from=t2v_model_provider /models/vae /ComfyUI/models/vae
 
 COPY . .
 COPY extra_model_paths.yaml /ComfyUI/extra_model_paths.yaml

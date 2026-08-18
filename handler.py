@@ -33,6 +33,8 @@ HIGH_MODEL_LOADER_NODE_ID = '230'
 LOW_MODEL_LOADER_NODE_ID = '235'
 T2V_HIGH_MODEL_LOADER_NODE_ID = '37'
 T2V_LOW_MODEL_LOADER_NODE_ID = '56'
+T2V_HIGH_BASE_LORA_NODE_ID = '67'
+T2V_LOW_BASE_LORA_NODE_ID = '68'
 T2V_HIGH_SHIFT_NODE_ID = '54'
 T2V_LOW_SHIFT_NODE_ID = '55'
 HTTP_ERROR_BODY_LIMIT = int(os.getenv('WAN22_HTTP_ERROR_BODY_LIMIT', '4000'))
@@ -659,14 +661,14 @@ def apply_dynamic_lora_pairs_to_t2v_workflow(prompt, lora_pairs):
     apply_lora_chain_to_model_loader(
         prompt,
         high_loras,
-        T2V_HIGH_MODEL_LOADER_NODE_ID,
+        T2V_HIGH_BASE_LORA_NODE_ID,
         3700,
         'T2V high',
     )
     apply_lora_chain_to_model_loader(
         prompt,
         low_loras,
-        T2V_LOW_MODEL_LOADER_NODE_ID,
+        T2V_LOW_BASE_LORA_NODE_ID,
         3800,
         'T2V low',
     )
@@ -703,12 +705,10 @@ def get_optional_float(job_input, *keys):
 
 
 def configure_t2v_workflow(prompt, job_input):
-    steps = max(2, int(job_input.get('steps', 6)))
+    steps = max(2, int(job_input.get('steps', 4)))
     split_step = max(1, min(steps - 1, round(steps * 0.5)))
     cfg = float(job_input.get('cfg', 1.0))
     seed = int(job_input['seed'])
-    sigma_shift = get_optional_float(job_input, 'sigma_shift', 'sigmaShift')
-    fps = get_optional_float(job_input, 'fps', 'output_fps', 'frame_rate')
 
     prompt['6']['inputs']['text'] = job_input['prompt']
     prompt['7']['inputs']['text'] = get_negative_prompt(job_input)
@@ -724,13 +724,8 @@ def configure_t2v_workflow(prompt, job_input):
     prompt['59']['inputs']['width'] = int(job_input['width'])
     prompt['59']['inputs']['height'] = int(job_input['height'])
     prompt['59']['inputs']['length'] = int(job_input.get('length', 81))
-    if sigma_shift is not None:
-        prompt[T2V_HIGH_SHIFT_NODE_ID]['inputs']['shift'] = sigma_shift
-        prompt[T2V_LOW_SHIFT_NODE_ID]['inputs']['shift'] = sigma_shift
-    if fps is not None:
-        prompt['60']['inputs']['frame_rate'] = fps
 
-    logger.info(f'T2V workflow configured: steps={steps}, split={split_step}, cfg={cfg}, sigma_shift={sigma_shift}, fps={fps}')
+    logger.info(f'T2V workflow configured: steps={steps}, split={split_step}, cfg={cfg}')
     return prompt
 
 
