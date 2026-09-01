@@ -1,8 +1,10 @@
 import base64
+import hashlib
 import json
 import logging
 import mimetypes
 import os
+import shutil
 import time
 import urllib.parse
 import urllib.request
@@ -20,6 +22,16 @@ logger = logging.getLogger(__name__)
 server_address = os.getenv('SERVER_ADDRESS', '127.0.0.1')
 client_id = str(uuid.uuid4())
 WRAPPED_KEY_PREFIX = 'v1:'
+LORA_CACHE_RELATIVE_DIR = os.getenv('LORA_CACHE_RELATIVE_DIR', '_runtime_cache').strip('/ ')
+LORA_CACHE_ROOT = os.path.abspath(os.getenv('LORA_CACHE_DIR', f'/ComfyUI/models/loras/{LORA_CACHE_RELATIVE_DIR}'))
+LORA_SOURCE_ROOTS = [
+    root
+    for root in (
+        os.getenv('LORA_SOURCE_ROOTS', '/runpod-volume/loras:/ComfyUI/models/loras')
+        .split(os.pathsep)
+    )
+    if root
+]
 UNSAFE_OPTIMIZATION_CLASSES = {
     'EasyCache',
     'PathchSageAttentionKJ',
@@ -391,6 +403,99 @@ def strip_unsafe_optimization_nodes(prompt):
     return prompt
 
 
+def is_path_inside(path, root):
+    try:
+        return os.path.commonpath([os.path.realpath(path), os.path.realpath(root)]) == os.path.realpath(root)
+    except ValueError:
+        return False
+
+
+def resolve_lora_source_path(lora_name):
+    source_roots = [os.path.abspath(root) for root in LORA_SOURCE_ROOTS]
+    requested_path = os.path.realpath(lora_name) if os.path.isabs(lora_name) else None
+
+    if requested_path:
+        for root in source_roots:
+            if is_path_inside(requested_path, root) and os.path.isfile(requested_path):
+                return requested_path
+        raise Exception('LoRA path must be inside configured LoRA source roots.')
+
+    for root in source_roots:
+        candidate = os.path.realpath(os.path.join(root, lora_name))
+        if not is_path_inside(candidate, root):
+            raise Exception('LoRA filename must not escape configured LoRA source roots.')
+        if os.path.isfile(candidate):
+            return candidate
+
+    raise Exception('LoRA file was not found in configured LoRA source roots.')
+
+
+def build_lora_cache_name(source_path):
+    source_stat = os.stat(source_path)
+    source_identity = '\0'.join([
+        os.path.realpath(source_path),
+        str(source_stat.st_size),
+        str(source_stat.st_mtime_ns),
+    ])
+    digest = hashlib.sha256(source_identity.encode('utf-8')).hexdigest()[:32]
+    extension = os.path.splitext(source_path)[1] or '.safetensors'
+    return f'lora_{digest}{extension}', source_stat.st_size
+
+
+def stage_lora_to_local_cache(lora_name):
+    source_path = resolve_lora_source_path(lora_name)
+
+    if is_path_inside(source_path, LORA_CACHE_ROOT):
+        return os.path.relpath(source_path, '/ComfyUI/models/loras')
+
+    cache_file_name, source_size = build_lora_cache_name(source_path)
+    cache_path = os.path.join(LORA_CACHE_ROOT, cache_file_name)
+    staged_lora_name = os.path.join(LORA_CACHE_RELATIVE_DIR, cache_file_name)
+
+    os.makedirs(LORA_CACHE_ROOT, exist_ok=True)
+
+    if os.path.isfile(cache_path) and os.path.getsize(cache_path) == source_size:
+        logger.info(f'LoRA cache hit: id={cache_file_name}, size_bytes={source_size}')
+        return staged_lora_name
+
+    copy_started = time.time()
+    temp_path = f'{cache_path}.tmp.{uuid.uuid4().hex}'
+
+    try:
+        shutil.copy2(source_path, temp_path)
+        os.replace(temp_path, cache_path)
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+    elapsed = max(time.time() - copy_started, 0.001)
+    throughput = (source_size / (1024 * 1024)) / elapsed
+    logger.info(
+        f'LoRA cache miss: id={cache_file_name}, size_bytes={source_size}, '
+        f'copy_seconds={elapsed:.3f}, throughput_mbps={throughput:.2f}'
+    )
+    return staged_lora_name
+
+
+def stage_lora_pairs(lora_pairs):
+    staged = []
+
+    for pair in lora_pairs:
+        if not isinstance(pair, dict):
+            staged.append(pair)
+            continue
+
+        lora_high = str(pair.get('high') or '').strip()
+        lora_low = str(pair.get('low') or '').strip()
+        staged.append({
+            **pair,
+            'high': stage_lora_to_local_cache(lora_high) if lora_high else pair.get('high'),
+            'low': stage_lora_to_local_cache(lora_low) if lora_low else pair.get('low'),
+        })
+
+    return staged
+
+
 def detect_video_mime(path_value):
     mime, _ = mimetypes.guess_type(path_value)
     return mime or 'video/mp4'
@@ -426,6 +531,8 @@ def handler(job):
                 lora_pairs = lora_pairs[:3]
             workflow_file = '/wan22_3lora.json'
             lora_count = min(lora_count, 3)
+        if lora_count > 0:
+            lora_pairs = stage_lora_pairs(lora_pairs)
 
         prompt = load_workflow(workflow_file)
         if not unsafe_optimizations_enabled():
